@@ -17,6 +17,49 @@ from ui_components import (
     apply_styles, render_header, render_methodology,
     make_card, build_station_selector_map, PH_PROVINCES,
 )
+import math
+
+# ── Haversine distance (km) ───────────────────────────────────────────────────
+def _haversine_km(lat1, lon1, lat2, lon2):
+    R = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+def _fmt_dist(km):
+    if km < 1.0:
+        return f"{km*1000:.0f} m"
+    return f"{km:.1f} km"
+
+def _nearest_stations(stations_df, pin_lat, pin_lon, n=3):
+    df = stations_df[stations_df["LATITUDE"].notna() & stations_df["LONGITUDE"].notna()].copy()
+    df["_dist_km"] = df.apply(
+        lambda r: _haversine_km(pin_lat, pin_lon, float(r["LATITUDE"]), float(r["LONGITUDE"])),
+        axis=1,
+    )
+    return df.nsmallest(n, "_dist_km")[["NAME", "ID", "_dist_km"]].reset_index(drop=True)
+
+
+@st.cache_data(show_spinner=False)
+def _geocode(place: str) -> list[dict]:
+    """Call Nominatim to resolve a place name → list of {name, lat, lon}."""
+    try:
+        resp = requests.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={"q": place, "format": "json", "limit": 5,
+                    "countrycodes": "ph", "addressdetails": 0},
+            headers={"User-Agent": "NOAA-GSOD-Dashboard/1.0"},
+            timeout=5,
+        )
+        if resp.status_code == 200:
+            return [
+                {"name": r.get("display_name", ""), "lat": float(r["lat"]), "lon": float(r["lon"])}
+                for r in resp.json()
+            ]
+    except Exception:
+        pass
+    return []
 
 st.set_page_config(
     page_title="NOAA GSOD Climate Time Series",
@@ -52,6 +95,14 @@ if "show_ma6" not in st.session_state:
     st.session_state["show_ma6"] = False
 if "show_trend" not in st.session_state:
     st.session_state["show_trend"] = True
+if "pin_mode" not in st.session_state:
+    st.session_state["pin_mode"] = False
+if "pin_location" not in st.session_state:
+    st.session_state["pin_location"] = None   # (lat, lon) or None
+if "geo_results" not in st.session_state:
+    st.session_state["geo_results"] = []      # list of {name, lat, lon}
+if "geo_query" not in st.session_state:
+    st.session_state["geo_query"] = ""
 
 selected_station_name = st.session_state["map_selected_station"]
 selected_row          = stations_df.loc[stations_df["NAME"] == selected_station_name].iloc[0]
@@ -60,104 +111,264 @@ selected_lat          = fmt_coord(selected_row.get("LATITUDE",  ""))
 selected_lon          = fmt_coord(selected_row.get("LONGITUDE", ""))
 
 # ════════════════════════════════════════════════════════════════════════════
-# SIDEBAR — Map + search + date range
+# SIDEBAR
 # ════════════════════════════════════════════════════════════════════════════
 with st.sidebar:
-    # ── Search bar ────────────────────────────────────────────────────────
-    search_query = st.text_input(
-        "search",
-        placeholder="🔍 Station, province or city…",
-        label_visibility="collapsed",
-        key="search_query",
-    )
-    sq = search_query.strip().lower()
 
-    # ── Build unified suggestion list as user types ───────────────────────
-    province_hits = []   # list of (display_label, place_key, coords)
-    station_hits  = []   # list of station name strings
+    # ── Mode toggle ───────────────────────────────────────────────────────
+    mode_col1, mode_col2 = st.columns(2)
+    with mode_col1:
+        if st.button("🔍 Search", use_container_width=True,
+                     type="primary" if not st.session_state["pin_mode"] else "secondary"):
+            st.session_state["pin_mode"] = False
+            st.rerun()
+    with mode_col2:
+        if st.button("📌 Pin location", use_container_width=True,
+                     type="primary" if st.session_state["pin_mode"] else "secondary"):
+            st.session_state["pin_mode"] = True
+            st.rerun()
 
-    if sq:
-        # Province/city matches — partial match both ways
-        for place_key, coords in PH_PROVINCES.items():
-            if sq in place_key or place_key.startswith(sq):
-                province_hits.append((f"📍 {place_key.title()}", place_key, coords))
-        # Station name matches
-        station_hits = [n for n in station_name_options if sq in n.lower()]
+    pin_mode = st.session_state["pin_mode"]
 
-    # Combine: provinces first (up to 5), then stations (up to 25)
-    suggestion_labels = (
-        [lbl for lbl, _, _ in province_hits[:5]] +
-        [f"🌐 {n}" for n in station_hits[:25]]
-    )
+    # ══════════════════════════════════════════════════════════════════════
+    # SEARCH MODE — single smart bar
+    # ══════════════════════════════════════════════════════════════════════
+    if not pin_mode:
+        search_query = st.text_input(
+            "search",
+            placeholder="🔍 City, province, station, or coords (10.123, 123.087)…",
+            label_visibility="collapsed", key="search_query",
+        )
+        sq = search_query.strip()
 
-    selected_suggestion = None
-    if suggestion_labels:
-        selected_suggestion = st.selectbox(
-            "Suggestions",
-            suggestion_labels,
-            key="_unified_suggest",
-            label_visibility="collapsed",
+        # ── Coordinate shortcut: "10.123, 123.087" ───────────────────────
+        import re
+        coord_match = re.match(
+            r"^\s*(-?\d{1,3}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)\s*$", sq
+        )
+        if coord_match:
+            clat = float(coord_match.group(1))
+            clon = float(coord_match.group(2))
+            if st.button("📌 Go to coordinates", key="_goto_coords",
+                         use_container_width=True, type="primary"):
+                st.session_state["map_center"] = (clat, clon, 12)
+                st.rerun()
+        else:
+            sql = sq.lower()
+            province_hits, station_hits = [], []
+            if sql:
+                for place_key, coords in PH_PROVINCES.items():
+                    if sql in place_key or place_key.startswith(sql):
+                        province_hits.append((f"📍 {place_key.title()}", place_key, coords))
+                station_hits = [n for n in station_name_options if sql in n.lower()]
+
+            suggestion_labels = (
+                [lbl for lbl, _, _ in province_hits[:5]] +
+                [f"🌐 {n}" for n in station_hits[:25]]
+            )
+            if suggestion_labels:
+                selected_suggestion = st.selectbox(
+                    "Suggestions", suggestion_labels,
+                    key="_unified_suggest", label_visibility="collapsed",
+                )
+                if st.button("✔ Go", key="_confirm_suggest",
+                             use_container_width=True, type="primary"):
+                    if selected_suggestion.startswith("📍 "):
+                        for place_key, coords in PH_PROVINCES.items():
+                            if place_key.title() == selected_suggestion[2:].strip():
+                                st.session_state["map_center"] = coords
+                                break
+                    elif selected_suggestion.startswith("🌐 "):
+                        sname = selected_suggestion[2:].strip()
+                        st.session_state["map_selected_station"] = sname
+                        row = stations_df.loc[stations_df["NAME"] == sname]
+                        if not row.empty:
+                            st.session_state["map_center"] = (
+                                float(row.iloc[0]["LATITUDE"]),
+                                float(row.iloc[0]["LONGITUDE"]), 11)
+                        st.session_state["_trigger_process"] = True
+                    st.rerun()
+            elif sql:
+                st.caption("*No matches — try a landmark name or enter coords like `14.651, 121.049`*")
+
+        highlight_names = station_hits[:25] if (not coord_match and sql) else None
+        pin_loc = st.session_state["pin_location"]
+
+    # ══════════════════════════════════════════════════════════════════════
+    # PIN MODE — single bar: place name OR coords, then click map
+    # ══════════════════════════════════════════════════════════════════════
+    else:
+        pin_loc = st.session_state["pin_location"]
+
+        # Single smart input
+        gc1, gc2 = st.columns([7, 3])
+        with gc1:
+            pin_query = st.text_input(
+                "pin_search",
+                placeholder="Place, landmark, or lat, lon…",
+                label_visibility="collapsed", key="_pin_query",
+            )
+        with gc2:
+            pin_search_clicked = st.button("🔎 Find", key="_pin_search_btn",
+                                           use_container_width=True, type="primary")
+
+        import re
+        pq = pin_query.strip()
+        coord_m = re.match(
+            r"^\s*(-?\d{1,3}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)\s*$", pq
         )
 
-        # Confirm button
-        if st.button("✔ Go", key="_confirm_suggest",
-                     use_container_width=True, type="primary"):
-            # Determine if province or station was chosen
-            chosen_label = selected_suggestion
-            if chosen_label.startswith("📍 "):
-                # Province/city zoom
-                chosen_place = chosen_label[2:].strip().lower()
-                for place_key, coords in PH_PROVINCES.items():
-                    if place_key == chosen_place or place_key.title() == chosen_label[2:].strip():
-                        st.session_state["map_center"] = coords
-                        break
-            elif chosen_label.startswith("🌐 "):
-                # Station select + zoom
-                station_name_chosen = chosen_label[2:].strip()
-                st.session_state["map_selected_station"] = station_name_chosen
-                # Zoom map to that station
-                row = stations_df.loc[stations_df["NAME"] == station_name_chosen]
-                if not row.empty:
-                    slat = float(row.iloc[0]["LATITUDE"])
-                    slon = float(row.iloc[0]["LONGITUDE"])
-                    st.session_state["map_center"] = (slat, slon, 11)
-                st.session_state["_trigger_process"] = True
-            st.rerun()
-    elif sq:
-        st.caption("*No matches found.*")
+        if pin_search_clicked and pq:
+            if coord_m:
+                clat, clon = float(coord_m.group(1)), float(coord_m.group(2))
+                st.session_state["pin_location"] = (clat, clon)
+                st.session_state["map_center"]   = (clat, clon, 13)
+                st.session_state["geo_results"]  = []
+                st.rerun()
+            else:
+                with st.spinner("Searching…"):
+                    results = _geocode(pq)
+                st.session_state["geo_results"] = results
 
-    # ── Map center logic ──────────────────────────────────────────────────
-    current_center = st.session_state.get("map_center", None)
+        geo_results = st.session_state["geo_results"]
+        if geo_results:
+            for gi, gr in enumerate(geo_results[:5]):
+                short = gr["name"].split(",")[0].strip()
+                rc1, rc2 = st.columns([8, 2])
+                with rc1:
+                    st.markdown(
+                        f'<div style="font-size:0.78rem;color:var(--txt-primary);padding:3px 0;">'
+                        f'<strong>{short}</strong> '
+                        f'<span style="font-size:0.68rem;color:var(--txt-muted);">'
+                        f'{gr["lat"]:.4f}, {gr["lon"]:.4f}</span></div>',
+                        unsafe_allow_html=True,
+                    )
+                with rc2:
+                    if st.button("📌", key=f"_geo_pin_{gi}", use_container_width=True):
+                        st.session_state["pin_location"] = (gr["lat"], gr["lon"])
+                        st.session_state["map_center"]   = (gr["lat"], gr["lon"], 13)
+                        st.session_state["geo_results"]  = []
+                        st.rerun()
+
+        # Instruction / active pin status
+        if pin_loc is None:
+            st.markdown(
+                '<div class="hero-box" style="margin:6px 0;text-align:center;">'
+                '👆 Search above <em>or</em> <strong>click anywhere on the map</strong> to drop a pin'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            plat, plon = pin_loc
+            pi1, pi2 = st.columns([7, 3])
+            with pi1:
+                st.markdown(
+                    f'<div class="hero-box" style="margin:6px 0;">'
+                    f'📌 <strong>{plat:.5f}, {plon:.5f}</strong>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+            with pi2:
+                st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+                if st.button("✖ Clear", key="_clear_pin", use_container_width=True):
+                    st.session_state["pin_location"] = None
+                    st.session_state["geo_results"]  = []
+                    st.rerun()
+
+            # 3-column nearest-stations table
+            nearest = _nearest_stations(stations_df, plat, plon, n=3)
+            st.markdown(
+                '<div class="ctrl-label" style="margin-top:8px;">NEAREST STATIONS</div>',
+                unsafe_allow_html=True,
+            )
+            hc1, hc2, hc3 = st.columns([6, 3, 2])
+            with hc1: st.markdown('<span style="font-size:0.62rem;color:var(--txt-muted);">STATION</span>', unsafe_allow_html=True)
+            with hc2: st.markdown('<span style="font-size:0.62rem;color:var(--txt-muted);">DISTANCE</span>', unsafe_allow_html=True)
+            with hc3: st.markdown("&nbsp;", unsafe_allow_html=True)
+
+            for i, (_, row) in enumerate(nearest.iterrows()):
+                dist_str = _fmt_dist(row["_dist_km"])
+                is_sel   = row["NAME"] == st.session_state["map_selected_station"]
+                nc1, nc2, nc3 = st.columns([6, 3, 2])
+                with nc1:
+                    s = "font-weight:700;color:var(--accent-orange2);" if is_sel else "color:var(--txt-primary);"
+                    st.markdown(
+                        f'<div style="font-size:0.80rem;{s}padding:6px 0;">'
+                        f'{row["NAME"]}{"  ✓" if is_sel else ""}</div>',
+                        unsafe_allow_html=True,
+                    )
+                with nc2:
+                    st.markdown(
+                        f'<div style="font-size:0.78rem;color:var(--txt-blue);'
+                        f'font-family:monospace;padding:6px 0;">{dist_str}</div>',
+                        unsafe_allow_html=True,
+                    )
+                with nc3:
+                    if st.button("Load", key=f"_load_{i}_{row['NAME']}",
+                                 use_container_width=True,
+                                 type="primary" if is_sel else "secondary"):
+                        st.session_state["map_selected_station"] = row["NAME"]
+                        srow = stations_df.loc[stations_df["NAME"] == row["NAME"]].iloc[0]
+                        st.session_state["map_center"] = (
+                            float(srow["LATITUDE"]), float(srow["LONGITUDE"]), 12)
+                        st.session_state["_trigger_process"] = True
+                        st.rerun()
+
+        highlight_names = None
 
     # ── Map ───────────────────────────────────────────────────────────────
-    # Highlight station hits in the map
-    highlight_names = station_hits[:25] if station_hits else None
+    current_center = st.session_state.get("map_center", None)
     selector_fig = build_station_selector_map(
         stations_df, selected_station_name,
         highlight_names=highlight_names,
         map_center=current_center,
+        pin_location=pin_loc if pin_mode else None,
+        pin_mode=pin_mode,
     )
     event = st.plotly_chart(
         selector_fig, use_container_width=True,
         key="station_selector_map", on_select="rerun",
-        config={"scrollZoom": True},
+        config={"scrollZoom": True, "displayModeBar": False},
     )
 
-    # Map click → auto process + zoom to clicked station
+    # ── Map click handler ─────────────────────────────────────────────────
     if event and event.get("selection") and event["selection"].get("points"):
         pts = event["selection"]["points"]
         if pts:
-            raw = pts[0].get("customdata", "")
-            clicked_name = (raw[0] if isinstance(raw, (list, tuple)) else str(raw)).strip()
-            if clicked_name and clicked_name in station_name_options:
-                st.session_state["map_selected_station"] = clicked_name
-                row = stations_df.loc[stations_df["NAME"] == clicked_name]
-                if not row.empty:
-                    slat = float(row.iloc[0]["LATITUDE"])
-                    slon = float(row.iloc[0]["LONGITUDE"])
-                    st.session_state["map_center"] = (slat, slon, 11)
-                st.session_state["_trigger_process"] = True
-                st.rerun()
+            pt = pts[0]
+            raw = pt.get("customdata", "")
+            clicked_val = (raw[0] if isinstance(raw, (list, tuple)) else str(raw)).strip()
+
+            if pin_mode:
+                # Grid point click → extract lat/lon from customdata tag
+                if clicked_val.startswith("__grid__"):
+                    parts = clicked_val.split("__")
+                    try:
+                        clat = float(parts[2]); clon = float(parts[3])
+                        st.session_state["pin_location"] = (clat, clon)
+                        st.session_state["map_center"]   = (clat, clon, 11)
+                        st.session_state["geo_results"]  = []
+                        st.rerun()
+                    except Exception:
+                        pass
+                # Station marker click in pin mode → use station coords as pin
+                elif clicked_val and clicked_val != "__pin__" and clicked_val in station_name_options:
+                    srow = stations_df.loc[stations_df["NAME"] == clicked_val].iloc[0]
+                    clat = float(srow["LATITUDE"]); clon = float(srow["LONGITUDE"])
+                    st.session_state["pin_location"] = (clat, clon)
+                    st.session_state["map_center"]   = (clat, clon, 11)
+                    st.session_state["geo_results"]  = []
+                    st.rerun()
+            else:
+                if clicked_val and clicked_val in station_name_options:
+                    st.session_state["map_selected_station"] = clicked_val
+                    row = stations_df.loc[stations_df["NAME"] == clicked_val]
+                    if not row.empty:
+                        st.session_state["map_center"] = (
+                            float(row.iloc[0]["LATITUDE"]),
+                            float(row.iloc[0]["LONGITUDE"]), 11)
+                    st.session_state["_trigger_process"] = True
+                    st.rerun()
 
     # ── Date range ────────────────────────────────────────────────────────
     st.markdown('<div class="ctrl-label" style="margin-top:6px;">DATE RANGE</div>',

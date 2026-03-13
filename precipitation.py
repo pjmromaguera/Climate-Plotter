@@ -3,18 +3,18 @@ import pandas as pd
 import plotly.graph_objects as go
 from scipy.stats import linregress, gumbel_r
 
-# ── Colour palette ────────────────────────────────────────────────────────────
-BAR_FILL   = "rgba(88,166,255,0.50)"
-BAR_LINE   = "rgba(88,166,255,0.80)"
-MA1_LINE   = "#f0883e"
-MA3_LINE   = "#d2a8ff"
-MA6_LINE   = "#ffa657"
-TREND_LINE = "#3fb950"
-BG_COLOR   = "#161b22"
-GRID_COLOR = "rgba(48,54,61,0.55)"
-TICK_COLOR = "#8b949e"
-FONT_COLOR = "#e6edf3"
-ANN_COLOR  = "#aab6c8"
+from theme import (
+    BAR_FILL_DARK, BAR_FILL_LIGHT, BAR_LINE_DARK, BAR_LINE_LIGHT,
+    MA1_COLOR, MA3_COLOR, MA6_COLOR, TREND_COLOR,
+    FREQ_24H, FREQ_72H,
+    BG_PAPER, BG_PLOT,
+    GRID_COLOR, TICK_COLOR, FONT_COLOR, ANN_COLOR,
+    MENU_BG, MENU_BORDER, MENU_FONT,
+)
+
+# Use dark-theme bar fill as default (looks fine on both with transparency)
+BAR_FILL = BAR_FILL_DARK
+BAR_LINE = BAR_LINE_DARK
 
 
 # ── Core preparation ──────────────────────────────────────────────────────────
@@ -87,12 +87,11 @@ def build_precip_plot(
     lat: str,
     lon: str,
     summary: dict | None = None,
-    height: int = 420,
+    height: int = 480,
 ) -> go.Figure:
 
     fig = go.Figure()
 
-    # Bar — monthly totals (trace 0)
     fig.add_trace(go.Bar(
         x=df_plot["date"], y=df_plot["monthly_rain_mm"],
         name="Monthly Rainfall",
@@ -100,11 +99,10 @@ def build_precip_plot(
         hovertemplate="<b>%{x|%Y-%m}</b><br>%{y:.1f} mm<extra></extra>",
     ))
 
-    # MA traces — always added, visibility controlled by buttons
     ma_defs = [
-        ("ma_1m", "1-Mo MA",  MA1_LINE, show_ma1),
-        ("ma_3m", "3-Mo MA",  MA3_LINE, show_ma3),
-        ("ma_6m", "6-Mo MA",  MA6_LINE, show_ma6),
+        ("ma_1m", "1-Mo MA", MA1_COLOR, show_ma1),
+        ("ma_3m", "3-Mo MA", MA3_COLOR, show_ma3),
+        ("ma_6m", "6-Mo MA", MA6_COLOR, show_ma6),
     ]
     ma_trace_indices = []
     for col, label, color, visible in ma_defs:
@@ -113,31 +111,28 @@ def build_precip_plot(
             fig.add_trace(go.Scatter(
                 x=df_plot["date"], y=df_plot[col],
                 mode="lines", name=label,
-                line=dict(color=color, width=2.0),
+                line=dict(color=color, width=2.2),
                 connectgaps=True, visible=visible,
                 hovertemplate=f"<b>%{{x|%Y-%m}}</b><br>{label}: %{{y:.1f}} mm<extra></extra>",
             ))
 
-    # Trendline (always added, visibility toggleable)
     trend_trace_idx = None
     if "trend" in df_plot.columns:
         trend_trace_idx = len(fig.data)
         fig.add_trace(go.Scatter(
             x=df_plot["date"], y=df_plot["trend"],
             mode="lines", name="Trend",
-            line=dict(color=TREND_LINE, width=1.8, dash="dash"),
+            line=dict(color=TREND_COLOR, width=1.8, dash="dash"),
             visible=show_trend,
             hovertemplate="<b>%{x|%Y-%m}</b><br>Trend: %{y:.1f} mm<extra></extra>",
         ))
 
     subtitle_text = f"({lat}, {lon})" if lat and lon else ""
-    summary_text = _precip_annotation(summary)
-
-    _apply_dark_layout(
+    _apply_layout(
         fig,
-        title=f"{station_name}",
+        title=station_name,
         subtitle=subtitle_text,
-        annotation=summary_text,
+        annotation=_precip_annotation(summary),
         yaxis_title="mm",
         height=height,
         n_traces=len(fig.data),
@@ -153,12 +148,11 @@ def build_precip_plot(
 def _precip_annotation(summary: dict | None) -> str:
     if not summary:
         return ""
-    parts = [
+    return "  ·  ".join([
         f"Period: {summary['period']}",
         f"Monthly Avg: {summary['avg']:.0f} mm",
         f"Annual Avg: {summary['annual_avg']:.0f} mm/yr",
-    ]
-    return "  ·  ".join(parts)
+    ])
 
 
 # ── Frequency analysis ────────────────────────────────────────────────────────
@@ -186,17 +180,15 @@ def compute_return_periods(df_daily: pd.DataFrame) -> pd.DataFrame:
     rps = [2, 5, 10, 25, 50, 100]
     ann_24 = _annual_max(1)
     ann_72 = _annual_max(3)
-
     if len(ann_24) < 3 and len(ann_72) < 3:
         return pd.DataFrame()
 
-    rows_24 = _fit(ann_24, rps)
-    rows_72 = _fit(ann_72, rps)
-
     return pd.DataFrame({
         "Return Period (years)": rps,
-        "24-hr Rainfall (mm)":   [round(v, 1) if not np.isnan(v) else np.nan for v in rows_24],
-        "72-hr Rainfall (mm)":   [round(v, 1) if not np.isnan(v) else np.nan for v in rows_72],
+        "24-hr Rainfall (mm)": [round(v, 1) if not np.isnan(v) else np.nan
+                                 for v in _fit(ann_24, rps)],
+        "72-hr Rainfall (mm)": [round(v, 1) if not np.isnan(v) else np.nan
+                                 for v in _fit(ann_72, rps)],
     })
 
 
@@ -204,16 +196,16 @@ def build_frequency_plot(
     freq_df: pd.DataFrame,
     station_name: str,
     station_id: str,
-    height: int = 380,
+    height: int = 460,
 ) -> go.Figure:
     fig = go.Figure()
     rp_str = [str(r) for r in freq_df["Return Period (years)"]]
-    colors = {"24-hr Rainfall (mm)": "#58a6ff", "72-hr Rainfall (mm)": "#d2a8ff"}
-    for col, color in colors.items():
+    series = [("24-hr Rainfall (mm)", FREQ_24H), ("72-hr Rainfall (mm)", FREQ_72H)]
+    for col, color in series:
         if col in freq_df.columns:
             fig.add_trace(go.Scatter(
                 x=rp_str, y=freq_df[col], mode="lines+markers", name=col,
-                line=dict(color=color, width=2),
+                line=dict(color=color, width=2.2),
                 marker=dict(size=7, color=color),
                 hovertemplate=f"<b>%{{x}}-yr</b><br>{col}: %{{y:.1f}} mm<extra></extra>",
             ))
@@ -221,15 +213,18 @@ def build_frequency_plot(
         title=dict(text=f"{station_name} — Frequency Analysis",
                    x=0.5, xanchor="center", font=dict(size=14, color=FONT_COLOR)),
         height=height,
-        paper_bgcolor=BG_COLOR, plot_bgcolor=BG_COLOR,
+        paper_bgcolor=BG_PAPER, plot_bgcolor=BG_PLOT,
         font=dict(color=FONT_COLOR, size=11),
-        margin=dict(l=30, r=20, t=55, b=60),
+        margin=dict(l=40, r=20, t=60, b=60),
         xaxis=dict(type="category", title="Return Period (years)",
-                   tickfont=dict(color=TICK_COLOR), gridcolor=GRID_COLOR),
+                   tickfont=dict(color=TICK_COLOR), gridcolor=GRID_COLOR,
+                   linecolor=GRID_COLOR),
         yaxis=dict(title="Rainfall (mm)", tickfont=dict(color=TICK_COLOR),
-                   gridcolor=GRID_COLOR),
+                   gridcolor=GRID_COLOR, linecolor=GRID_COLOR),
         legend=dict(orientation="h", yanchor="bottom", y=1.02,
-                    xanchor="center", x=0.5, font=dict(color=ANN_COLOR, size=10)),
+                    xanchor="center", x=0.5,
+                    font=dict(color=ANN_COLOR, size=10),
+                    bgcolor="rgba(0,0,0,0)"),
         hovermode="x unified",
     )
     return fig
@@ -239,9 +234,9 @@ def export_precip_plot_html(fig: go.Figure) -> bytes:
     return fig.to_html(include_plotlyjs="cdn").encode("utf-8")
 
 
-# ── Shared layout helper ──────────────────────────────────────────────────────
+# ── Shared layout ─────────────────────────────────────────────────────────────
 
-def _apply_dark_layout(
+def _apply_layout(
     fig: go.Figure,
     title: str,
     subtitle: str,
@@ -254,30 +249,24 @@ def _apply_dark_layout(
     trend_trace_idx: int | None = None,
     trend_initially_on: bool = True,
 ) -> None:
-    annotations = []
+    ann_list = []
     if annotation:
-        annotations.append(dict(
+        ann_list.append(dict(
             text=annotation,
             x=0.5, y=-0.22, xref="paper", yref="paper",
             xanchor="center", yanchor="top", showarrow=False,
             font=dict(size=10, color=ANN_COLOR),
         ))
 
-    # ── MA dropdown + Trendline toggle ───────────────────────────────────────
     updatemenus = []
 
     if ma_trace_indices and ma_defs and n_traces > 0:
-        # Capture actual initial visibility of every trace from the figure
         def _actual_vis(i):
             v = fig.data[i].visible
-            if v is None or v is True:
-                return True
-            return bool(v)
+            return True if (v is None or v is True) else False
 
         base_vis = [_actual_vis(i) for i in range(n_traces)]
 
-        # For each dropdown option, build a full per-trace visibility list.
-        # MA indices get the specified show value; every other trace keeps its base.
         def _ma_vis(show1, show3, show6):
             v = list(base_vis)
             for k, show in zip(ma_trace_indices, [show1, show3, show6]):
@@ -299,49 +288,45 @@ def _apply_dark_layout(
             (False, False, True ): 3,
             (True,  True,  True ): 4,
         }
-        active_idx = pattern_map.get(active_pattern, 2)  # default 3-Mo
+        active_idx = pattern_map.get(active_pattern, 2)
 
         updatemenus.append(dict(
             type="dropdown",
-            x=0.0, xanchor="left",
-            y=1.13, yanchor="top",
-            showactive=True,
-            active=active_idx,
-            bgcolor="#1e2a3a", bordercolor="#3d5068", borderwidth=1,
-            font=dict(color="#c9d1d9", size=10),
+            x=0.0, xanchor="left", y=1.13, yanchor="top",
+            showactive=True, active=active_idx,
+            bgcolor=MENU_BG, bordercolor=MENU_BORDER, borderwidth=1,
+            font=dict(color=MENU_FONT, size=10),
             buttons=[
                 dict(label=lbl, method="restyle", args=[{"visible": vis}])
                 for lbl, vis in options
             ],
         ))
 
-    # Trendline toggle — full visibility lists, no dict shorthand
     if trend_trace_idx is not None and n_traces > 0:
-        base_vis_trend = [_actual_vis(i) for i in range(n_traces)]
-        vis_trend_on  = list(base_vis_trend); vis_trend_on[trend_trace_idx]  = True
-        vis_trend_off = list(base_vis_trend); vis_trend_off[trend_trace_idx] = False
+        base_vis_t = [_actual_vis(i) for i in range(n_traces)]
+        vis_on  = list(base_vis_t); vis_on[trend_trace_idx]  = True
+        vis_off = list(base_vis_t); vis_off[trend_trace_idx] = False
         updatemenus.append(dict(
             type="buttons", direction="right",
-            x=0.42, xanchor="left",
-            y=1.13, yanchor="top",
-            showactive=True,
-            active=0 if trend_initially_on else 1,
-            bgcolor="#1e2a3a", bordercolor="#3d5068", borderwidth=1,
-            font=dict(color="#c9d1d9", size=10),
+            x=0.42, xanchor="left", y=1.13, yanchor="top",
+            showactive=True, active=0 if trend_initially_on else 1,
+            bgcolor=MENU_BG, bordercolor=MENU_BORDER, borderwidth=1,
+            font=dict(color=MENU_FONT, size=10),
             buttons=[
-                dict(label="☑ Trend", method="restyle", args=[{"visible": vis_trend_on}]),
-                dict(label="☐ Trend", method="restyle", args=[{"visible": vis_trend_off}]),
+                dict(label="☑ Trend", method="restyle", args=[{"visible": vis_on}]),
+                dict(label="☐ Trend", method="restyle", args=[{"visible": vis_off}]),
             ],
         ))
 
+    title_text = (f"{title}<br><sup style='color:{ANN_COLOR}'>{subtitle}</sup>"
+                  if subtitle else title)
+
     fig.update_layout(
-        title=dict(
-            text=f"{title}<br><sup style='color:#8b949e'>{subtitle}</sup>" if subtitle else title,
-            x=0.5, xanchor="center",
-            font=dict(size=13, color=FONT_COLOR),
-        ),
+        title=dict(text=title_text, x=0.5, xanchor="center",
+                   font=dict(size=13, color=FONT_COLOR)),
         height=height,
-        paper_bgcolor=BG_COLOR, plot_bgcolor=BG_COLOR,
+        paper_bgcolor=BG_PAPER,
+        plot_bgcolor=BG_PLOT,
         font=dict(color=FONT_COLOR, size=10),
         margin=dict(l=40, r=15, t=80, b=75),
         legend=dict(
@@ -351,11 +336,11 @@ def _apply_dark_layout(
         ),
         hovermode="x unified",
         uirevision="station_plot",
-        annotations=annotations,
+        annotations=ann_list,
         updatemenus=updatemenus,
     )
     fig.update_xaxes(showgrid=True, gridcolor=GRID_COLOR,
-                     linecolor="#30363d", tickfont=dict(color=TICK_COLOR, size=9))
+                     linecolor=GRID_COLOR, tickfont=dict(color=TICK_COLOR, size=9))
     fig.update_yaxes(title_text=yaxis_title, showgrid=True, gridcolor=GRID_COLOR,
-                     linecolor="#30363d", tickfont=dict(color=TICK_COLOR, size=9),
-                     title_font=dict(size=10))
+                     linecolor=GRID_COLOR, tickfont=dict(color=TICK_COLOR, size=9),
+                     title_font=dict(size=10, color=TICK_COLOR))

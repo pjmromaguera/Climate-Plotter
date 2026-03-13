@@ -1,5 +1,4 @@
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
@@ -7,78 +6,154 @@ import streamlit as st
 def apply_styles():
     st.markdown("""
         <style>
-            /* ── Sidebar styling ── */
-            [data-testid="stSidebar"] {
-                background: #0d1117 !important;
-                border-right: 1px solid rgba(48,54,61,0.7) !important;
-                min-width: 320px !important;
-                max-width: 320px !important;
-            }
-            [data-testid="stSidebar"] > div:first-child {
-                padding-top: 0.8rem;
-                padding-left: 0.8rem;
-                padding-right: 0.8rem;
-            }
-            /* Hide the sidebar collapse toggle arrow */
-            [data-testid="collapsedControl"] { display: none !important; }
+        /* ═══════════════════════════════════════════════════════
+           CSS VARIABLES — light & dark theme tokens
+           We define on :root (dark default), override for light.
+        ════════════════════════════════════════════════════════ */
+        :root {
+            --bg-app:        #0d1117;
+            --bg-sidebar:    #0d1117;
+            --bg-card:       linear-gradient(180deg,rgba(17,24,34,0.96),rgba(14,19,27,0.96));
+            --bg-hero:       linear-gradient(180deg,rgba(22,27,34,0.92),rgba(17,22,29,0.92));
+            --bg-panel:      linear-gradient(180deg,rgba(22,27,34,0.96),rgba(16,21,28,0.96));
+            --border-card:   rgba(90,103,126,0.26);
+            --border-hero:   rgba(240,136,62,0.3);
+            --border-panel:  rgba(90,103,126,0.22);
+            --border-sidebar:rgba(48,54,61,0.7);
+            --txt-primary:   #f3f4f6;
+            --txt-secondary: #b6c2d1;
+            --txt-muted:     #8ea0bc;
+            --txt-mono:      #aab6c8;
+            --txt-meta:      #6b7a90;
+            --accent-orange: #f0883e;
+            --accent-orange2:#ff9d4d;
+            --txt-blue:      #58a6ff;
+            --txt-green:     #3fb950;
+            --txt-red:       #f85149;
+            --txt-violet:    #bc8cff;
+            --shadow-card:   0 6px 18px rgba(0,0,0,0.16);
+        }
 
-            .stApp {
-                background:
-                    radial-gradient(circle at top left,  rgba(31,111,235,0.07), transparent 30%),
-                    radial-gradient(circle at top right, rgba(240,136,62,0.07),  transparent 25%),
-                    #0d1117;
-                color: #e6edf3;
+        /* Light theme overrides */
+        @media (prefers-color-scheme: light) {
+            :root {
+                --bg-app:        #f6f8fa;
+                --bg-sidebar:    #ffffff;
+                --bg-card:       linear-gradient(180deg,#ffffff,#f0f4f9);
+                --bg-hero:       linear-gradient(180deg,#fff8f2,#fff3e8);
+                --bg-panel:      linear-gradient(180deg,#ffffff,#f6f8fa);
+                --border-card:   rgba(30,60,120,0.12);
+                --border-hero:   rgba(220,100,20,0.35);
+                --border-panel:  rgba(30,60,120,0.10);
+                --border-sidebar:rgba(220,220,230,0.9);
+                --txt-primary:   #0f172a;
+                --txt-secondary: #334155;
+                --txt-muted:     #64748b;
+                --txt-mono:      #475569;
+                --txt-meta:      #94a3b8;
+                --accent-orange: #c05c10;
+                --accent-orange2:#d4690f;
+                --txt-blue:      #1a6bbf;
+                --txt-green:     #166534;
+                --txt-red:       #b91c1c;
+                --txt-violet:    #6d28d9;
+                --shadow-card:   0 2px 8px rgba(0,0,0,0.07);
             }
-            .block-container { max-width: 100%; padding-top: 0.8rem; padding-bottom: 1.5rem; }
+        }
 
-            .eyebrow { font-size:0.66rem; letter-spacing:0.16em; text-transform:uppercase;
-                       color:#58a6ff; font-family:monospace; margin-bottom:0.2rem; }
-            .page-title { font-size:1.6rem; font-weight:800; color:#f3f4f6;
-                          margin-bottom:0.1rem; line-height:1.1; }
-            .subtitle { font-size:0.78rem; color:#a8b3c7; font-family:monospace; margin-bottom:0.4rem; }
+        /* ── Sidebar ── */
+        [data-testid="stSidebar"] {
+            background: var(--bg-sidebar) !important;
+            border-right: 1px solid var(--border-sidebar) !important;
+            min-width: 320px !important;
+            max-width: 640px !important;
+        }
+        [data-testid="stSidebar"] > div:first-child {
+            padding-top: 0.8rem;
+            padding-left: 0.8rem;
+            padding-right: 0.8rem;
+        }
+        [data-testid="collapsedControl"] { display: none !important; }
 
-            .station-badge {
-                background: linear-gradient(135deg,rgba(240,136,62,0.12),rgba(240,136,62,0.04));
-                border: 1px solid rgba(240,136,62,0.38);
-                border-radius: 10px; padding: 8px 14px; margin-bottom: 6px;
-                display: flex; align-items: center; gap: 14px;
-            }
-            .station-badge-name { font-size:1.0rem; font-weight:700; color:#f0883e; }
-            .station-badge-meta { font-size:0.7rem; color:#6b7a90; font-family:monospace; }
+        /* ── App background ── */
+        .stApp {
+            background: var(--bg-app);
+            color: var(--txt-primary);
+        }
+        .block-container { max-width: 100%; padding-top: 0.8rem; padding-bottom: 1.5rem; }
 
-            .hero-box {
-                background: linear-gradient(180deg,rgba(22,27,34,0.92),rgba(17,22,29,0.92));
-                border:1px solid rgba(240,136,62,0.3); border-left:3px solid #f0883e;
-                border-radius:10px; padding:10px 14px; color:#b6c2d1;
-                font-size:0.72rem; line-height:1.5; margin:6px 0;
-            }
-            .hero-box strong { color:#ff9d4d; }
+        /* ── Typography ── */
+        .eyebrow {
+            font-size:0.66rem; letter-spacing:0.16em; text-transform:uppercase;
+            color: var(--txt-blue); font-family:monospace; margin-bottom:0.2rem;
+        }
+        .page-title {
+            font-size:1.6rem; font-weight:800; color: var(--txt-primary);
+            margin-bottom:0.1rem; line-height:1.1;
+        }
 
-            .metric-card {
-                background:linear-gradient(180deg,rgba(17,24,34,0.96),rgba(14,19,27,0.96));
-                border:1px solid rgba(90,103,126,0.26); border-radius:12px;
-                padding:10px 12px; min-height:78px;
-                box-shadow:inset 0 1px 0 rgba(255,255,255,0.03),0 6px 18px rgba(0,0,0,0.16);
-            }
-            .metric-label { font-size:0.60rem; color:#8ea0bc; text-transform:uppercase;
-                            letter-spacing:0.13em; font-family:monospace; margin-bottom:0.35rem; }
-            .metric-value { font-size:1.2rem; font-weight:800; font-family:monospace;
-                            color:#f3f4f6; line-height:1.1; }
-            .metric-sub   { font-size:0.70rem; color:#93a1b5; font-family:monospace; margin-top:0.2rem; }
+        /* ── Station badge ── */
+        .station-badge {
+            background: linear-gradient(135deg,
+                rgba(240,136,62,0.10), rgba(240,136,62,0.03));
+            border: 1px solid var(--border-hero);
+            border-radius: 10px; padding: 8px 14px; margin-bottom: 6px;
+            display: flex; align-items: center; gap: 14px;
+        }
+        .station-badge-name { font-size:1.0rem; font-weight:700; color: var(--accent-orange); }
+        .station-badge-meta { font-size:0.7rem; color: var(--txt-meta); font-family:monospace; }
 
-            .txt-blue   { color: #58a6ff; }
-            .txt-green  { color: #3fb950; }
-            .txt-red    { color: #f85149; }
-            .txt-orange { color: #ff9d4d; }
-            .txt-violet { color: #bc8cff; }
+        /* ── Methodology box ── */
+        .hero-box {
+            background: var(--bg-hero);
+            border: 1px solid var(--border-hero);
+            border-left: 3px solid var(--accent-orange);
+            border-radius:10px; padding:10px 14px;
+            color: var(--txt-secondary);
+            font-size:0.72rem; line-height:1.5; margin:6px 0;
+        }
+        .hero-box strong { color: var(--accent-orange2); }
 
-            .panel-wrap {
-                background:linear-gradient(180deg,rgba(22,27,34,0.96),rgba(16,21,28,0.96));
-                border:1px solid rgba(90,103,126,0.22); border-radius:12px;
-                padding:8px 8px 4px 8px; box-shadow:0 6px 20px rgba(0,0,0,0.14);
-            }
-            .ctrl-label { font-size:0.60rem; color:#8ea0bc; text-transform:uppercase;
-                          letter-spacing:0.13em; font-family:monospace; margin-bottom:0.3rem; }
+        /* ── Metric cards ── */
+        .metric-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-card);
+            border-radius:12px; padding:10px 12px; min-height:78px;
+            box-shadow: var(--shadow-card);
+        }
+        .metric-label {
+            font-size:0.60rem; color: var(--txt-muted); text-transform:uppercase;
+            letter-spacing:0.13em; font-family:monospace; margin-bottom:0.35rem;
+        }
+        .metric-value {
+            font-size:1.2rem; font-weight:800; font-family:monospace;
+            color: var(--txt-primary); line-height:1.1;
+        }
+        .metric-sub {
+            font-size:0.70rem; color: var(--txt-mono);
+            font-family:monospace; margin-top:0.2rem;
+        }
+
+        /* ── Accent text colours ── */
+        .txt-blue   { color: var(--txt-blue);   }
+        .txt-green  { color: var(--txt-green);  }
+        .txt-red    { color: var(--txt-red);     }
+        .txt-orange { color: var(--accent-orange2); }
+        .txt-violet { color: var(--txt-violet);  }
+
+        /* ── Chart panel wrapper ── */
+        .panel-wrap {
+            background: var(--bg-panel);
+            border: 1px solid var(--border-panel);
+            border-radius:12px; padding:8px 8px 4px 8px;
+            box-shadow: var(--shadow-card);
+        }
+
+        /* ── Control label ── */
+        .ctrl-label {
+            font-size:0.60rem; color: var(--txt-muted); text-transform:uppercase;
+            letter-spacing:0.13em; font-family:monospace; margin-bottom:0.3rem;
+        }
         </style>
     """, unsafe_allow_html=True)
 
@@ -88,33 +163,33 @@ def render_header(selected_station_name, selected_station_id, selected_lat, sele
                 unsafe_allow_html=True)
     st.markdown('<div class="page-title">NOAA GSOD — Climate Time Series</div>',
                 unsafe_allow_html=True)
-
-    # Station badge inline with title
     coords = f" · {selected_lat}, {selected_lon}" if selected_lat else ""
     st.markdown(
-        f"""<div class="station-badge">
-            <div>
-                <div class="station-badge-name">{selected_station_name}</div>
-                <div class="station-badge-meta">ID: {selected_station_id}{coords}</div>
-            </div>
-            <div style="margin-left:auto;font-size:0.65rem;color:#4a5568;">
-                Click map to change station
-            </div>
-        </div>""",
+        f'<div class="station-badge">'
+        f'<div>'
+        f'<div class="station-badge-name">{selected_station_name}</div>'
+        f'<div class="station-badge-meta">ID: {selected_station_id}{coords}</div>'
+        f'</div>'
+        f'<div style="margin-left:auto;font-size:0.65rem;color:var(--txt-meta);">'
+        f'Click map to change station'
+        f'</div>'
+        f'</div>',
         unsafe_allow_html=True,
     )
 
 
 def render_methodology():
-    st.markdown("""
-        <div class="hero-box">
-            <strong>Data & Method:</strong>
-            Daily NOAA GSOD records → monthly precipitation totals · daily temperature series.
-            Moving averages: 1-Mo, 3-Mo, 6-Mo (toggle above chart).
-            Trendline: linear regression. Frequency analysis: Gumbel EV1 on annual maxima.<br>
-            <strong>Disclaimer:</strong> For research/educational use only. Expert review required before operational use.
-        </div>
-    """, unsafe_allow_html=True)
+    st.markdown(
+        '<div class="hero-box">'
+        '<strong>Data &amp; Method:</strong> '
+        'Daily NOAA GSOD records → monthly precipitation totals · daily temperature series. '
+        'Moving averages: 1-Mo, 3-Mo, 6-Mo (dropdown above chart). '
+        'Trendline: linear regression. Frequency analysis: Gumbel EV1 on annual maxima.<br>'
+        '<strong>Disclaimer:</strong> For research/educational use only. '
+        'Expert review required before operational use.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def make_card(label: str, value: str, sub: str = "", value_class: str = ""):
@@ -233,11 +308,26 @@ PH_PROVINCES: dict[str, tuple[float, float, int]] = {
 }
 
 
+def _make_click_grid() -> tuple[list, list]:
+    """20×25 invisible grid covering the Philippines for empty-space click capture."""
+    import numpy as np
+    lats = np.linspace(4.5, 21.5, 20)
+    lons = np.linspace(116.0, 127.5, 25)
+    grid_lat, grid_lon = [], []
+    for la in lats:
+        for lo in lons:
+            grid_lat.append(round(float(la), 4))
+            grid_lon.append(round(float(lo), 4))
+    return grid_lat, grid_lon
+
+
 def build_station_selector_map(
     stations_df: pd.DataFrame,
     selected_name: str,
     highlight_names: list | None = None,
     map_center: tuple[float, float, int] | None = None,
+    pin_location: tuple[float, float] | None = None,
+    pin_mode: bool = False,
 ) -> go.Figure:
     has_coords = stations_df["LATITUDE"].notna() & stations_df["LONGITUDE"].notna()
     df = stations_df[has_coords].copy()
@@ -247,15 +337,29 @@ def build_station_selector_map(
 
     fig = go.Figure()
 
+    # ── Invisible click-grid (pin mode only) ─────────────────────────────
+    if pin_mode:
+        grid_lat, grid_lon = _make_click_grid()
+        fig.add_trace(go.Scattermapbox(
+            lat=grid_lat, lon=grid_lon,
+            mode="markers",
+            marker=dict(size=18, color="rgba(0,0,0,0)", opacity=0),
+            customdata=[f"__grid__{la:.4f}__{lo:.4f}"
+                        for la, lo in zip(grid_lat, grid_lon)],
+            hoverinfo="skip",
+            showlegend=False,
+            name="__grid__",
+        ))
+
     if highlight_names is not None:
         highlight_set = set(highlight_names)
         dim = df[~df["is_selected"] & ~df["NAME"].isin(highlight_set)]
         if not dim.empty:
             fig.add_trace(go.Scattermapbox(
                 lat=dim["lat"], lon=dim["lon"], mode="markers",
-                marker=dict(size=5, color="rgba(88,166,255,0.15)"),
+                marker=dict(size=5, color="rgba(26,107,191,0.25)"),
                 text=dim["NAME"], customdata=dim["NAME"],
-                hovertemplate="<b>%{customdata}</b><br><span style='color:#aab6c8;font-size:10px'>click to select</span><extra></extra>",
+                hovertemplate="<b>%{customdata}</b><extra></extra>",
                 name="Other",
             ))
         bright = df[~df["is_selected"] & df["NAME"].isin(highlight_set)]
@@ -264,7 +368,7 @@ def build_station_selector_map(
                 lat=bright["lat"], lon=bright["lon"], mode="markers",
                 marker=dict(size=10, color="rgba(88,166,255,0.95)"),
                 text=bright["NAME"], customdata=bright["NAME"],
-                hovertemplate="<b>%{customdata}</b><br><span style='color:#58a6ff;font-size:10px'>▲ click to select & process</span><extra></extra>",
+                hovertemplate="<b>%{customdata}</b><extra></extra>",
                 name="Match",
             ))
     else:
@@ -272,9 +376,9 @@ def build_station_selector_map(
         if not unsel.empty:
             fig.add_trace(go.Scattermapbox(
                 lat=unsel["lat"], lon=unsel["lon"], mode="markers",
-                marker=dict(size=7, color="rgba(88,166,255,0.70)"),
+                marker=dict(size=7, color="rgba(26,107,191,0.65)"),
                 text=unsel["NAME"], customdata=unsel["NAME"],
-                hovertemplate="<b>%{customdata}</b><br><span style='color:#aab6c8;font-size:10px'>click to select & process</span><extra></extra>",
+                hovertemplate="<b>%{customdata}</b><extra></extra>",
                 name="Stations",
             ))
 
@@ -290,19 +394,40 @@ def build_station_selector_map(
             name="Selected",
         ))
 
+    # ── Pinned location marker ────────────────────────────────────────────
+    if pin_location is not None:
+        plat, plon = pin_location
+        fig.add_trace(go.Scattermapbox(
+            lat=[plat], lon=[plon],
+            mode="markers+text",
+            marker=dict(size=16, color="#e53e3e"),
+            text=["📌"],
+            textposition="top right",
+            textfont=dict(size=14, color="#e53e3e"),
+            customdata=["__pin__"],
+            hovertemplate=f"<b>📌 Pinned</b><br>{plat:.5f}, {plon:.5f}<extra></extra>",
+            name="Pin",
+        ))
+
     if map_center is not None:
         centre_lat, centre_lon, zoom = map_center
+    elif pin_location is not None:
+        centre_lat, centre_lon, zoom = pin_location[0], pin_location[1], 11
     else:
-        # Always default to full Philippines — user scrolls/zooms to navigate
         centre_lat, centre_lon, zoom = 12.5, 122.5, 5
 
+    cursor = "crosshair" if pin_mode else "default"
     fig.update_layout(
-        mapbox=dict(style="carto-darkmatter",
-                    center=dict(lat=centre_lat, lon=centre_lon), zoom=zoom),
+        mapbox=dict(
+            style="carto-positron",
+            center=dict(lat=centre_lat, lon=centre_lon),
+            zoom=zoom,
+        ),
         height=520,
-        paper_bgcolor="#0d1117",
+        paper_bgcolor="rgba(0,0,0,0)",
         margin=dict(l=0, r=0, t=0, b=0),
         showlegend=False,
-        uirevision=f"map_{selected_name}_{centre_lat:.2f}_{centre_lon:.2f}",
+        dragmode="pan" if pin_mode else "zoom",
+        uirevision=f"map_{selected_name}_{centre_lat:.2f}_{centre_lon:.2f}_{pin_mode}",
     )
     return fig
